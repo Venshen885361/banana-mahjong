@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from .hand import winning_decompositions
 from .meld import Block, Decomposition, Meld, MeldType
-from .tiles import N_KINDS, TERMINALS, VOWELS, E, X, Y, Z, next_tile
+from .tiles import N_KINDS, TERMINALS, VOWELS, A, B, I, N, Q, U, X, Y, Z, next_tile
 
 TSUMO_MODE_MENZEN = "menzen_tsumo"  # 使用 1番「門前清自摸和」
 TSUMO_MODE_PLAIN = "tsumo"          # 使用 2番「自摸」（副露減一番）
@@ -135,7 +135,6 @@ def _eval_shape(ctx: WinContext, decomp: Decomposition, win_block: Block | None)
     red = 1 if open_hand else 0  # 副露減一番
 
     all_counts = ctx.all_tiles
-    n_tiles = sum(all_counts)
 
     # ================= 役滿 =================
     ym: list[tuple[str, int]] = []
@@ -154,17 +153,27 @@ def _eval_shape(ctx: WinContext, decomp: Decomposition, win_block: Block | None)
         (i in dora_set_all) for i, c in enumerate(all_counts) if c
     ):
         ym.append(("寶一色", 1))
+    # QUIZ：Q、U、I、Z 四個字母各至少 2 張（Q 與 Z 全局各只有 2 張，必定用光）
+    if all(all_counts[t] >= 2 for t in (Q, U, I, Z)):
+        ym.append(("QUIZ", 2))
 
-    # --- Rush E：14 張 E ---
-    rush_e = all_counts[E] >= 14 and n_tiles == all_counts[E]
-    if rush_e:
-        ym.append(("Rush E", 3 - (1 if open_hand else 0)))
-
-    if decomp.form == "dragon":
-        ym.append(("一條龍", 2))
+    # --- 不走「4 面子 + 1 雀頭」的特殊和牌型 ---
+    special = {
+        "dragon": ("一條龍", 2),
+        "rush_a": ("Rush A", 3 - (1 if open_hand else 0)),   # 副露減一倍
+        "rush_e": ("Rush E", 3 - (1 if open_hand else 0)),   # 副露減一倍
+    }.get(decomp.form)
+    if special is not None:
+        ym.append(special)
         res.yakuman = ym
         res.multiplier = sum(m for _, m in ym)
         return res
+
+    # 七連對：七對子且七組對子的字母連續
+    if decomp.form == "chiitoi":
+        pair_starts = sorted(b.start for b in decomp.blocks)
+        if pair_starts[-1] - pair_starts[0] == 6:
+            ym.append(("七連對", 2))
 
     trips = decomp.triplets
     kans = decomp.kans
@@ -189,12 +198,14 @@ def _eval_shape(ctx: WinContext, decomp: Decomposition, win_block: Block | None)
     n_ankou = concealed_trip_count()
     tanki = win_block is not None and win_block.kind == "pair"
 
-    if not rush_e:
-        if n_ankou == 4 and menzen:
-            if tanki:
-                ym.append(("四暗刻單騎", 2))
-            else:
-                ym.append(("四暗刻", 1))
+    if n_ankou == 4 and menzen:
+        if tanki:
+            ym.append(("四暗刻單騎", 2))
+        else:
+            ym.append(("四暗刻", 1))
+    # BANANA：同時擁有 BBB、AAA、NNN 三組刻子（或槓）。B 全局只有 3 張，必定用光
+    if {A, B, N} <= {b.start for b in trips}:
+        ym.append(("BANANA", 1))
     if len(kans) == 4:
         ym.append(("四槓子", 1))
     if len(kans) >= 3:

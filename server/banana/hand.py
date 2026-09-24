@@ -12,7 +12,7 @@ from collections.abc import Iterator, Sequence
 from functools import lru_cache
 
 from .meld import Block, Decomposition, Meld
-from .tiles import N_KINDS, counts_of
+from .tiles import N_KINDS, A, E, counts_of
 
 # --------------------------------------------------------------------------
 # 基本拆解
@@ -91,14 +91,30 @@ def winning_decompositions(
 
     concealed: 長度 26 的張數陣列，**含和了牌**，不含副露。
     """
+    results: list[Decomposition] = []
+
+    all_counts = list(concealed)
+    for m in melds:
+        for t in m.tiles:
+            all_counts[t] += 1
+    total_all = sum(all_counts)
+
+    # 這兩型不走「4 面子 + 1 雀頭」，所以要在張數檢查之前判（含槓的情況）
+    if total_all == 14:
+        # Rush A：把牌山全部 13 張 A 收齊 + 任意 1 張。13 張 A 湊不出雀頭，故為獨立型
+        if all_counts[A] == 13:
+            results.append(Decomposition(pair=None, blocks=[], form="rush_a"))
+        # Rush E：14 張 E（含被槓走的）
+        if all_counts[E] == 14:
+            results.append(Decomposition(pair=None, blocks=[], form="rush_e"))
+
     total = sum(concealed)
     n_called = len(melds)
     need = 4 - n_called
     if need < 0 or total != 2 + 3 * need:
-        return []
+        return results
 
     called_blocks = [m.as_block() for m in melds]
-    results: list[Decomposition] = []
 
     for pair, sets in standard_decompositions(concealed, need):
         blocks = [Block("pair", pair), *sets, *called_blocks]
@@ -116,10 +132,6 @@ def winning_decompositions(
             )
 
     # 一條龍：14 張連續。允許有副露（總張數仍須為 14 張連續不同字母）
-    all_counts = list(concealed)
-    for m in melds:
-        for t in m.tiles:
-            all_counts[t] += 1
     if is_dragon(all_counts):
         idx = [i for i, c in enumerate(all_counts) if c]
         results.append(

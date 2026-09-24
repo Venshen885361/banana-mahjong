@@ -279,3 +279,61 @@ def test_no_yaku_open_hand():
 @pytest.mark.parametrize("bad", ["ABCIIIMNOUVWYZ", "AABBCCDDEEFFGH"])
 def test_not_a_win(bad):
     assert not is_winning(counts_of(parse(bad)))
+
+
+# ---------------------------------------------------------------- 自訂特殊役
+def test_banana():
+    # AAA BBB NNN + IJK + ZZ
+    y = names("AAABBBNNNIJKZZ", "Z")
+    assert y["BANANA"] == 1
+
+
+def test_banana_open():
+    melds = [Meld(MeldType.PON, (1, 1, 1), from_seat=1)]   # 碰 BBB
+    y = names("AAANNNIJKZZ", "Z", melds=melds)
+    assert y["BANANA"] == 1
+
+
+def test_rush_a():
+    # 把牌山全部 13 張 A 收齊 + 任意 1 張
+    y = names("A" * 13 + "Z", "Z")
+    assert y["Rush A"] == 3
+
+
+def test_rush_a_open():
+    melds = [Meld(MeldType.PON, (0, 0, 0), from_seat=1)]
+    y = names("A" * 10 + "Z", "Z", melds=melds)
+    assert y["Rush A"] == 2      # 副露減一倍
+
+
+def test_rush_a_needs_all_thirteen():
+    r = evaluate(ctx("A" * 12 + "ZZ", "Z"))
+    assert r is None or "Rush A" not in dict(r.yakuman)
+
+
+def test_seven_consecutive_pairs():
+    y = names("HHIIJJKKLLMMNN", "N")
+    assert y["七連對"] == 2
+    assert "七對子" not in y
+
+
+def test_chiitoi_not_consecutive():
+    y = names("AACCHHJJNNSSVV", "V")
+    assert "七連對" not in y
+
+
+def test_quiz():
+    y = names("AAEEIIOOQQUUZZ", "Z")
+    assert y["QUIZ"] == 2
+
+
+def test_quiz_standard_shape():
+    # QQ 當雀頭，XYZ 兩組吃掉兩張 Z，UU/II 用刻子湊
+    y = names("QQUUUIIIXYZXYZ", "Q")
+    assert y["QUIZ"] == 2
+
+
+def test_rush_e_with_kan():
+    melds = [Meld(MeldType.ANKAN, (4,) * 4)]
+    y = names("E" * 10, "E", melds=melds)
+    assert y["Rush E"] == 3

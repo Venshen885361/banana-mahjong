@@ -18,6 +18,7 @@ TILE_COUNTS: tuple[int, ...] = (
 TOTAL_TILES = sum(TILE_COUNTS)  # 144
 
 A, E, I, O, U = 0, 4, 8, 14, 20  # noqa: E741 —— 這些是牌名常數
+B, N, Q = 1, 13, 16
 X, Y, Z = 23, 24, 25
 VOWELS: frozenset[int] = frozenset({A, E, I, O, U})  # 母音（斷母音 / 母一色用）
 TERMINALS: frozenset[int] = frozenset({A, Z})  # 全帶 AZ 用
