@@ -10,15 +10,21 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from . import emotes as emote_lib
 from .bot import Bot
 from .game import Game, Phase
 from .score import MODE_HANCHAN, ScoreConfig
 from .yaku import TSUMO_MODE_MENZEN
 
-ACT_TIMEOUT = 30.0      # 打牌思考時間（秒）
-CLAIM_TIMEOUT = 10.0    # 鳴牌 / 榮和回應時間
+ACT_TIMEOUT = 30.0      # 打牌思考時間（秒），可被房間設定覆寫
+CLAIM_TIMEOUT = 10.0    # 鳴牌 / 榮和回應時間，可被房間設定覆寫
 BOT_DELAY = 0.45        # bot 假思考，讓畫面看得出節奏
 NEXT_HAND_DELAY = 10.0  # 結算畫面停留時間
+
+ACT_RANGE = (5, 300)    # 出牌時間允許範圍（秒）
+CLAIM_RANGE = (3, 120)
+EMOTE_COOLDOWN = 2.0    # 每人每 2 秒只能發一個表情
+EMOTE_TTL = 4.0         # 表情在畫面上停留多久
 
 
 @dataclass
@@ -40,6 +46,16 @@ class RoomConfig:
     tsumo_mode: str = TSUMO_MODE_MENZEN
     dora_wrap: bool = True
     start_points: int = 35000
+    act_seconds: float = ACT_TIMEOUT
+    claim_seconds: float = CLAIM_TIMEOUT
+    untimed: bool = False          # 不限時模式：關掉所有逃時
+    emotes_enabled: bool = True
+
+    def clamp(self) -> None:
+        lo, hi = ACT_RANGE
+        self.act_seconds = max(lo, min(hi, float(self.act_seconds)))
+        lo, hi = CLAIM_RANGE
+        self.claim_seconds = max(lo, min(hi, float(self.claim_seconds)))
 
     def to_score(self) -> ScoreConfig:
         return ScoreConfig(
@@ -62,6 +78,8 @@ class Room:
         self.game: Game | None = None
         self.bots: dict[int, Bot] = {}
         self.chat: list[dict[str, Any]] = []
+        self.emotes: dict[int, dict[str, Any]] = {}   # 座位 -> 目前顯示中的表情
+        self._emote_at: dict[int, float] = {}         # 座位 -> 上次發送時間（冷卻用）
         self.deadline: float | None = None
         self._lock = asyncio.Lock()
         self._task: asyncio.Task | None = None
@@ -96,7 +114,16 @@ class Room:
                 "tsumoMode": self.cfg.tsumo_mode,
                 "doraWrap": self.cfg.dora_wrap,
                 "startPoints": self.cfg.start_points,
+                "actSeconds": self.cfg.act_seconds,
+                "claimSeconds": self.cfg.claim_seconds,
+                "untimed": self.cfg.untimed,
+                "emotesEnabled": self.cfg.emotes_enabled,
             },
+            "emotes": [
+                {"seat": s, **e}
+                for s, e in self.emotes.items()
+                if e["until"] > time.time()
+            ],
             "started": self.started,
             "hostSeat": next(
                 (s.index for s in self.seats if s.token == self.host_token), None
@@ -156,6 +183,7 @@ class Room:
             return "已經開始了"
         if len(self.seats) < 2:
             return "至少需要 2 位玩家（可加 bot）"
+        self.cfg.clamp()
         self.game = Game(
             [s.name for s in self.seats],
             cfg=self.cfg.to_score(),
@@ -198,6 +226,32 @@ class Room:
             seat.connected = False
 
     # ------------------------------------------------------------------
+    def send_emote(self, seat_index: int, emote_id: str) -> str | None:
+        """回傳錯誤訊息；None 代表成功。"""
+        if not self.cfg.emotes_enabled:
+            return "這個房間關閉了表情"
+        now = time.time()
+        last = self._emote_at.get(seat_index, 0.0)
+        if now - last < EMOTE_COOLDOWN:
+            return None  # 冷卻中就安靜吃掉，不用跳錯誤煩玩家
+        if not emote_lib.is_valid(emote_id):
+            return "找不到這個表情"
+        self._emote_at[seat_index] = now
+        self.emotes[seat_index] = {"id": emote_id, "at": now, "until": now + EMOTE_TTL}
+        return None
+
+    def apply_timing(self, cfg: dict[str, Any]) -> None:
+        """房主在遊戲中調整時間，下一個決策點生效。"""
+        if "actSeconds" in cfg:
+            self.cfg.act_seconds = float(cfg["actSeconds"])
+        if "claimSeconds" in cfg:
+            self.cfg.claim_seconds = float(cfg["claimSeconds"])
+        if "untimed" in cfg:
+            self.cfg.untimed = bool(cfg["untimed"])
+        if "emotesEnabled" in cfg:
+            self.cfg.emotes_enabled = bool(cfg["emotesEnabled"])
+        self.cfg.clamp()
+
     async def submit(self, seat_index: int, action: dict[str, Any]) -> None:
         async with self._lock:
             if self.game is None:
@@ -234,7 +288,11 @@ class Room:
             if bot_seats:
                 continue
             break
-        timeout = CLAIM_TIMEOUT if g.phase is Phase.CLAIM else ACT_TIMEOUT
+        if self.cfg.untimed:
+            self.deadline = None
+            await self.broadcast()
+            return
+        timeout = self.cfg.claim_seconds if g.phase is Phase.CLAIM else self.cfg.act_seconds
         self.deadline = time.time() + timeout
         await self.broadcast()
         self._schedule(self._on_timeout, timeout)

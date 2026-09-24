@@ -21,7 +21,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .room import Room, RoomConfig
+from . import emotes as emote_lib
+from .room import ACT_RANGE, CLAIM_RANGE, Room, RoomConfig
 from .score import MODE_HANCHAN
 from .tiles import TILE_COUNTS, TOTAL_TILES
 
@@ -46,6 +47,10 @@ class CreateRoom(BaseModel):
     minHan: int = Field(default=1, ge=0, le=5)
     tsumoMode: str = "menzen_tsumo"
     doraWrap: bool = True
+    actSeconds: float = Field(default=30, ge=ACT_RANGE[0], le=ACT_RANGE[1])
+    claimSeconds: float = Field(default=10, ge=CLAIM_RANGE[0], le=CLAIM_RANGE[1])
+    untimed: bool = False
+    emotesEnabled: bool = True
 
 
 def _gc() -> None:
@@ -60,7 +65,15 @@ def meta() -> dict[str, Any]:
         "tileCounts": list(TILE_COUNTS),
         "totalTiles": TOTAL_TILES,
         "modes": ["hanchan", "tonpuu", "single"],
+        "actRange": list(ACT_RANGE),
+        "claimRange": list(CLAIM_RANGE),
     }
+
+
+@app.get("/api/emotes")
+def list_emotes() -> list[dict[str, Any]]:
+    """表情清單。把圖檔丟進 server/emotes/ 就會出現在這裡。"""
+    return emote_lib.catalogue()
 
 
 @app.get("/api/rooms")
@@ -82,7 +95,12 @@ def create_room(body: CreateRoom) -> dict[str, Any]:
         min_han=body.minHan,
         tsumo_mode=body.tsumoMode,
         dora_wrap=body.doraWrap,
+        act_seconds=body.actSeconds,
+        claim_seconds=body.claimSeconds,
+        untimed=body.untimed,
+        emotes_enabled=body.emotesEnabled,
     )
+    cfg.clamp()
     ROOMS[rid] = Room(rid, body.name, cfg)
     return {"id": rid}
 
@@ -130,6 +148,15 @@ async def _handle(room: Room, seat_index: int, token: str, msg: dict[str, Any]) 
     kind = msg.get("t")
     if kind == "action":
         await room.submit(seat_index, msg.get("action") or {})
+    elif kind == "emote":
+        err = room.send_emote(seat_index, str(msg.get("id", ""))[:80])
+        if err:
+            await room._safe_send(room.seats[seat_index], {"t": "error", "msg": err})
+        else:
+            await room.broadcast()
+    elif kind == "timing" and room.is_host(token):
+        room.apply_timing(msg.get("config") or {})
+        await room.broadcast()
     elif kind == "chat":
         text = str(msg.get("text", ""))[:200]
         if text:
@@ -149,6 +176,7 @@ async def _handle(room: Room, seat_index: int, token: str, msg: dict[str, Any]) 
         room.cfg.min_han = int(c.get("minHan", room.cfg.min_han))
         room.cfg.tsumo_mode = c.get("tsumoMode", room.cfg.tsumo_mode)
         room.cfg.dora_wrap = bool(c.get("doraWrap", room.cfg.dora_wrap))
+        room.apply_timing(c)
         await room.broadcast()
     elif kind == "start" and room.is_host(token):
         err = room.start()
@@ -158,6 +186,11 @@ async def _handle(room: Room, seat_index: int, token: str, msg: dict[str, Any]) 
             await room.kick_off()
     elif kind == "nextHand" and room.is_host(token):
         await room._auto_next_hand()
+
+
+# ---- 自訂表情圖片：把檔案丟進 server/emotes/ 就會被服務到 /emotes/<檔名> ----
+_EMOTES = emote_lib.ensure_dir()
+app.mount("/emotes", StaticFiles(directory=_EMOTES), name="emotes")
 
 
 # ---- 生產環境：直接吐出前端打包結果 ----

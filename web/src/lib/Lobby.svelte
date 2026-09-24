@@ -5,7 +5,19 @@
   let joinId = $state('')
   let creating = $state(false)
   let rooms = $state<Array<{ id: string; name: string; seats: number; maxPlayers: number; started: boolean; mode: string }>>([])
-  let form = $state({ name: '我的房間', mode: 'hanchan', singleTable: 'a', maxPlayers: 4, minHan: 1, tsumoMode: 'menzen_tsumo', doraWrap: true })
+  let form = $state({
+    name: '我的房間',
+    mode: 'hanchan',
+    singleTable: 'a',
+    maxPlayers: 4,
+    minHan: 1,
+    tsumoMode: 'menzen_tsumo',
+    doraWrap: true,
+    actSeconds: 30,
+    claimSeconds: 10,
+    untimed: false,
+    emotesEnabled: true,
+  })
 
   async function refresh() {
     try {
@@ -95,6 +107,31 @@
           </select>
         </label>
       </div>
+      <div class="grid grid-cols-2 gap-3">
+        <label class="grid gap-1 text-sm">
+          <span class="flex justify-between">
+            <span class="op-70">出牌時間</span>
+            <span class="tabular-nums text-banana">{form.untimed ? '—' : form.actSeconds + ' 秒'}</span>
+          </span>
+          <input type="range" min="5" max="300" step="5" bind:value={form.actSeconds} disabled={form.untimed} />
+        </label>
+        <label class="grid gap-1 text-sm">
+          <span class="flex justify-between">
+            <span class="op-70">鳴牌回應</span>
+            <span class="tabular-nums text-banana">{form.untimed ? '—' : form.claimSeconds + ' 秒'}</span>
+          </span>
+          <input type="range" min="3" max="120" step="1" bind:value={form.claimSeconds} disabled={form.untimed} />
+        </label>
+      </div>
+
+      <label class="flex items-center gap-2 text-sm op-80">
+        <input type="checkbox" bind:checked={form.untimed} />
+        不限時（關掉逾時自動打牌）
+      </label>
+      <label class="flex items-center gap-2 text-sm op-80">
+        <input type="checkbox" bind:checked={form.emotesEnabled} />
+        允許表情
+      </label>
       <label class="flex items-center gap-2 text-sm op-80">
         <input type="checkbox" bind:checked={form.doraWrap} />
         Z 的寶牌指示環繞回 A（規則書未定義）
@@ -137,6 +174,13 @@
     </section>
   </div>
 </div>
+
+<style>
+  input[type='range'] {
+    accent-color: #f2c744;
+    width: 100%;
+  }
+</style>
 
 <script lang="ts" module>
   export function modeLabel(m: string) {

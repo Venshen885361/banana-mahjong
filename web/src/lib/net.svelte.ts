@@ -1,11 +1,21 @@
-import type { Action, GameState, RoomState } from './types'
+import type { Action, EmoteDef, GameState, LiveEmote, RoomState } from './types'
 
 const LS_KEY = 'banana.session'
+const MUTE_KEY = 'banana.muted'
 
 interface Saved {
   roomId: string
   token: string
   name: string
+}
+
+function loadMuted(): number[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(MUTE_KEY) ?? '[]')
+    return Array.isArray(v) ? v : []
+  } catch {
+    return []
+  }
 }
 
 function load(): Saved | null {
@@ -29,13 +39,69 @@ class Net {
   name = $state(load()?.name ?? '')
   roomId = $state('')
 
+  // ---- 表情 ----
+  emoteCatalog = $state<EmoteDef[]>([])
+  /** 目前每個座位畫面上顯示的表情 */
+  liveEmotes = $state<Record<number, { emote: EmoteDef; key: number }>>({})
+  mutedSeats = $state<number[]>(loadMuted())
+  #emoteSeen: Record<number, number> = {}
+  #emoteTimers: Record<number, ReturnType<typeof setTimeout>> = {}
+
   readonly isHost = $derived(
     this.room != null && this.seat != null && this.room.hostSeat === this.seat,
   )
   readonly myActions = $derived(this.game?.you.actions ?? [])
 
+  async loadEmotes() {
+    try {
+      this.emoteCatalog = await (await fetch('/api/emotes')).json()
+    } catch {
+      this.emoteCatalog = []
+    }
+  }
+
+  sendEmote(id: string) {
+    this.send({ t: 'emote', id })
+  }
+
+  setTiming(config: Record<string, unknown>) {
+    this.send({ t: 'timing', config })
+  }
+
+  toggleMute(seat: number) {
+    this.mutedSeats = this.mutedSeats.includes(seat)
+      ? this.mutedSeats.filter((s) => s !== seat)
+      : [...this.mutedSeats, seat]
+    try {
+      localStorage.setItem(MUTE_KEY, JSON.stringify(this.mutedSeats))
+    } catch {
+      /* 無痕模式之類，忽略 */
+    }
+    if (this.mutedSeats.includes(seat)) this.#clearEmote(seat)
+  }
+
+  #clearEmote(seat: number) {
+    clearTimeout(this.#emoteTimers[seat])
+    const { [seat]: _drop, ...rest } = this.liveEmotes
+    this.liveEmotes = rest
+  }
+
+  #applyEmotes(list: LiveEmote[]) {
+    for (const e of list) {
+      if (this.mutedSeats.includes(e.seat)) continue
+      if ((this.#emoteSeen[e.seat] ?? 0) >= e.at) continue // 已經播過了
+      const def = this.emoteCatalog.find((x) => x.id === e.id)
+      if (!def) continue
+      this.#emoteSeen[e.seat] = e.at
+      this.liveEmotes = { ...this.liveEmotes, [e.seat]: { emote: def, key: e.at } }
+      clearTimeout(this.#emoteTimers[e.seat])
+      this.#emoteTimers[e.seat] = setTimeout(() => this.#clearEmote(e.seat), 3500)
+    }
+  }
+
   connect(roomId: string, name: string) {
     this.disconnect()
+    if (!this.emoteCatalog.length) void this.loadEmotes()
     this.roomId = roomId.toUpperCase()
     this.name = name
     const saved = load()
@@ -79,9 +145,11 @@ class Net {
       }
       case 'room':
         this.room = msg.room as RoomState
+        this.#applyEmotes(this.room.emotes ?? [])
         break
       case 'state':
         this.room = msg.room as RoomState
+        this.#applyEmotes(this.room.emotes ?? [])
         this.game = msg.state as GameState
         this.deadline = (msg.deadline as number | null) ?? null
         this.#pushEvents((msg.events as Record<string, unknown>[]) ?? [])

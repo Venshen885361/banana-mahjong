@@ -24,6 +24,11 @@ if exist "server\.venv\Scripts\python.exe" goto venv_ok
 echo   [1/3] 第一次執行，建立 Python 環境（只會做一次）...
 python -m venv "server\.venv"
 if errorlevel 1 goto venv_fail
+rem 有些 Windows 的 Python 建出來的 venv 不含 pip，補一次
+"server\.venv\Scripts\python.exe" -m pip --version >nul 2>nul
+if errorlevel 1 "server\.venv\Scripts\python.exe" -m ensurepip --upgrade
+"server\.venv\Scripts\python.exe" -m pip --version >nul 2>nul
+if errorlevel 1 goto pip_fail
 "server\.venv\Scripts\python.exe" -m pip install --quiet --upgrade pip
 "server\.venv\Scripts\python.exe" -m pip install --quiet fastapi "uvicorn[standard]" pydantic websockets
 if errorlevel 1 goto venv_fail
@@ -95,6 +100,26 @@ goto run
 
 rem ---------------- 啟動 ----------------
 :run
+rem ---- 檢查連接埠有沒有被上一次沒關乾淨的 server 佔住 ----
+set "BUSY="
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr /c:":%PORT% " ^| findstr /c:"LISTENING"') do set "BUSY=%%p"
+if not defined BUSY goto port_ok
+echo.
+echo   連接埠 %PORT% 已被 PID %BUSY% 佔用（多半是上一次沒關乾淨的伺服器）：
+tasklist /fi "pid eq %BUSY%" /fo table /nh
+set "KILL="
+set /p "KILL=   要結束它嗎？(y/n) > "
+if /i not "%KILL%"=="y" goto bye
+taskkill /f /pid %BUSY% >nul 2>nul
+timeout /t 1 /nobreak >nul
+:port_ok
+
+"server\.venv\Scripts\python.exe" -c "import uvicorn" 2>nul
+if errorlevel 1 (
+  echo   套件不完整，重新安裝...
+  "server\.venv\Scripts\python.exe" -m ensurepip --upgrade >nul 2>nul
+  "server\.venv\Scripts\python.exe" -m pip install --quiet fastapi "uvicorn[standard]" pydantic websockets
+)
 set "BANANA_WEB_DIST=%CD%\web\dist"
 start "" /min cmd /c "timeout /t 4 /nobreak >nul && start http://localhost:%PORT%"
 echo.
@@ -108,7 +133,8 @@ echo.
 if not defined FUNNEL goto bye
 echo.
 echo   收起 Tailscale Funnel...
-"%TS%" funnel --bg %PORT% off
+"%TS%" funnel --https=443 off >nul 2>nul
+"%TS%" funnel status
 goto bye
 
 rem ---------------- 錯誤處理 ----------------
@@ -131,6 +157,13 @@ goto bye
 echo   [錯誤] 找不到 tailscale
 echo.
 echo   請先安裝並登入 Tailscale：https://tailscale.com/download/windows
+goto bye
+
+:pip_fail
+echo.
+echo   [錯誤] 這個 venv 裡沒有 pip，也補不回來
+echo   請手動刪掉 server\.venv 資料夾後重開這個檔案；
+echo   還是不行的話，重裝一次 Python（官方安裝包，不要用 Microsoft Store 版）
 goto bye
 
 :venv_fail

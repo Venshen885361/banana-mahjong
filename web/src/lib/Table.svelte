@@ -3,6 +3,9 @@
   import Tile from './Tile.svelte'
   import Opponent from './Opponent.svelte'
   import Result from './Result.svelte'
+  import EmoteBar from './EmoteBar.svelte'
+  import EmoteBubble from './EmoteBubble.svelte'
+  import TimingPanel from './TimingPanel.svelte'
   import { ACTION_LABEL, doraTiles, L, seatOrder } from './rules'
   import type { Action } from './types'
 
@@ -53,6 +56,8 @@
   }
 
   let showLog = $state(false)
+  let showTiming = $state(false)
+  const myEmote = $derived(net.liveEmotes[me.seat])
 </script>
 
 <div class="min-h-full flex flex-col gap-2 p-2 sm:p-3 max-w-6xl mx-auto w-full">
@@ -68,10 +73,15 @@
       {/each}
     </div>
     {#if g.riichiSticks}<span class="text-banana text-xs">立直棒 ×{g.riichiSticks}</span>{/if}
-    {#if secsLeft !== null && (g.phase === 'act' || g.phase === 'claim')}
+    {#if net.room?.config.untimed}
+      <span class="ml-auto text-xs op-50">不限時</span>
+    {:else if secsLeft !== null && (g.phase === 'act' || g.phase === 'claim')}
       <span class="ml-auto tabular-nums {secsLeft <= 5 ? 'text-red-400' : 'op-70'}">{secsLeft}s</span>
     {:else}
       <span class="ml-auto"></span>
+    {/if}
+    {#if net.isHost}
+      <button class="btn-ghost text-xs py-1" onclick={() => (showTiming = true)}>設定</button>
     {/if}
     <button class="btn-ghost text-xs py-1" onclick={() => (showLog = !showLog)}>紀錄</button>
     <button class="btn-ghost text-xs py-1" onclick={() => net.leave()}>離開</button>
@@ -161,6 +171,8 @@
       <button class="btn-ghost" onclick={() => net.act({ type: 'pass' })}>過</button>
     {/if}
 
+    <EmoteBar />
+
     <div class="ml-auto flex items-center gap-3 text-xs">
       {#if me.furiten}<span class="text-red-400 font-bold">振聽</span>{/if}
       {#if me.waits.length}
@@ -172,9 +184,13 @@
 
   <!-- 我的手牌 -->
   <div
-    class="rounded-xl border p-2 sm:p-3 transition
+    class="relative rounded-xl border p-2 sm:p-3 transition
            {g.turn === me.seat && g.phase === 'act' ? 'border-banana/70 bg-banana/5' : 'border-white/10 bg-black/25'}"
   >
+    {#if myEmote}
+      <EmoteBubble emote={myEmote.emote} key={myEmote.key} />
+    {/if}
+
     <div class="flex items-center gap-2 text-sm mb-2">
       {#if g.dealer === me.seat}<span class="px-1.5 rounded bg-red-600 text-white text-xs font-bold">莊</span>{/if}
       <span class="font-semibold">{myPlayer.name}</span>
@@ -213,6 +229,10 @@
     </div>
   </div>
 </div>
+
+{#if showTiming}
+  <TimingPanel onclose={() => (showTiming = false)} />
+{/if}
 
 {#if g.result && (g.phase === 'hand_end' || g.phase === 'game_end')}
   <Result result={g.result} players={g.players} isHost={net.isHost} gameOver={g.phase === 'game_end'} />

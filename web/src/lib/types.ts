@@ -94,6 +94,21 @@ export interface SeatInfo {
   connected: boolean
 }
 
+export interface EmoteDef {
+  id: string
+  kind: 'text' | 'image'
+  label: string
+  text?: string
+  url?: string
+}
+
+export interface LiveEmote {
+  seat: number
+  id: string
+  at: number
+  until: number
+}
+
 export interface RoomState {
   id: string
   name: string
@@ -105,7 +120,12 @@ export interface RoomState {
     tsumoMode: string
     doraWrap: boolean
     startPoints: number
+    actSeconds: number
+    claimSeconds: number
+    untimed: boolean
+    emotesEnabled: boolean
   }
+  emotes?: LiveEmote[]
   started: boolean
   hostSeat: number | null
   seats: SeatInfo[]
